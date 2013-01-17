@@ -1,0 +1,73 @@
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+
+#define H_TEXT "mirror [-t|-u] [-s|-c] dst-addr port\n" \
+"\n" \
+"Parameters:\n" \
+"-t TCP\n" \
+"-u UDP\n" \
+"-h This help text\n\n"
+
+void helptext();
+void readargs(int argc, char *argv[], char *proto, char *mode, int *address, int *port);
+
+int main(int argc, char *argv[]) {
+  char proto, mode;
+  int addr, port;
+
+  //read arguments (options)
+  readargs(argc, argv, &proto, &mode, &addr, &port);
+
+  printf("here");
+
+  return 0;
+}
+
+void readargs(int argc, char *argv[], char *proto, char *mode, int *address, int *port) {
+  char c;
+  int protocount = 0, modecount = 0;
+  
+  while( (c = getopt(argc, argv, "tuhsc")) != -1) {
+    switch(c) {
+    case 't':
+      *proto = 't';
+      protocount++;
+      break;
+    case 'u':
+      *proto = 'u';
+      protocount++;
+      break;
+    case 's':
+      *mode = 's';
+      modecount++;
+      break;
+    case 'c':
+      *mode = 'c';
+      modecount++;
+      break;
+    case 'h':
+      helptext();
+      break;
+    default:
+      break;
+    }
+  }
+
+  if(protocount != 1) {
+    fprintf(stderr, "Please specify either TCP (-t), or UDP (-u)");
+  }
+  if(modecount != 1) {
+    fprintf(stderr, "Please specify either server (-s), or client (-c) mode");
+  }
+
+  /* int i;
+  for( i = 0; i < argc; i++) {
+    printf("%s ",argv[i]);
+    }*/
+}
+
+void helptext() {
+  printf(H_TEXT);
+  exit(1);
+}
