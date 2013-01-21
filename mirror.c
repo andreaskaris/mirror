@@ -5,8 +5,12 @@
 #include <sys/socket.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
+#include <string.h>
 #include <strings.h>
 #include <errno.h>
+#include <sys/select.h>
+
+#define DEBUG
 
 #define H_TEXT "mirror [-t|-u] [-s|-c] dst-addr port\n" \
 "\n" \
@@ -17,12 +21,28 @@
 
 #define BUF_LEN 1024
 
+#define DEBUG_NTOH(naddr,nport, msg, dir) {					\
+    unsigned int server_addr_h = ntohl(naddr);				\
+    unsigned short server_port_h = ntohs(nport);			\
+    printf("message '%s' - %s:  %d.%d.%d.%d:%d\n",			\
+	   msg,								\
+	   dir,								\
+	   server_addr_h >> 24 & 255,					\
+	   server_addr_h >> 16 & 255,					\
+	   server_addr_h >> 8 & 255,					\
+	   server_addr_h >> 0 & 255,					\
+	   server_port_h						\
+	   );								\
+  }
+
+
 void helptext();
 void readargs(int argc, char *argv[], char *proto, char *mode, unsigned int *address, unsigned short *port, char * default_port);
 void udp_server(const unsigned short port);
 void tcp_server(const unsigned short port);
 void udp_client(const unsigned int addr, const unsigned short port, int fd);
 void tcp_client(const unsigned int addr, const unsigned short port, int fd);
+void chomp(char *s);
 
 int main(int argc, char *argv[]) {
   char proto, mode;
@@ -154,7 +174,6 @@ void udp_server(const unsigned short port) {
   }
 
   for( ;; ) { //run until break
-    printf("in the loop\n");
     bzero(buf, sizeof(buf));
     bzero(&client_addr, sizeof(client_addr));
     client_addr_size = sizeof(client_addr);
@@ -165,8 +184,32 @@ void udp_server(const unsigned short port) {
       perror("receiving message");
       exit(1);
     }
+    chomp(buf);
 
-    printf("%s\n", buf);
+#ifdef DEBUG
+    printf("<=== ");
+    DEBUG_NTOH(client_addr.sin_addr.s_addr, client_addr.sin_port, buf, "from host");
+    printf("<=== ");
+    DEBUG_NTOH(server_addr.sin_addr.s_addr, server_addr.sin_port, buf, "to host");
+    printf("===> ");
+    DEBUG_NTOH(server_addr.sin_addr.s_addr, server_addr.sin_port, buf, "from host");
+    printf("===> ");
+    DEBUG_NTOH(client_addr.sin_addr.s_addr, client_addr.sin_port, buf, "to host");
+    printf("\n");
+#endif
+
+    //send back
+    if( sendto(
+	       sock, 
+	       buf, 
+	       sizeof(buf), 
+	       0, 
+	       (const struct sockaddr *) &client_addr, 
+	       sizeof(client_addr)
+	       ) == -1 ) {
+      perror("mirroring message");
+      exit(1);
+    }
   }
 
   close(sock);
@@ -183,14 +226,13 @@ void tcp_server(const unsigned short port) {
  * Create a UDP client
  */
 void udp_client(const unsigned int addr, const unsigned short port, int fd) {
-  printf("creating udp client, dst %d.%d.%d.%d and dport %d\n", addr >> 24 & 255, addr >> 16 & 255, addr >> 8 & 255, addr & 255, port);
-
   int sock; 
   //int addrlen;
   char buf[BUF_LEN];
   struct sockaddr_in server_addr;
-  //struct sockaddr_in client_addr;
-  //unsigned int client_addr_size;
+  unsigned int server_addr_size = sizeof(server_addr);
+  struct sockaddr_in client_addr;
+  unsigned int client_addr_size = sizeof(client_addr);
 
   unsigned int naddr = htonl(addr);
   unsigned short nport = htons(port); //port in network byte order
@@ -211,15 +253,47 @@ void udp_client(const unsigned int addr, const unsigned short port, int fd) {
       exit(1);
     }
 
-    if( sendto(sock, buf, sizeof(buf), 0, (const struct sockaddr *) &server_addr, sizeof(server_addr)) == -1 ) {
-      perror("Sending message to server: %d");
+    if( sendto(sock, buf, sizeof(buf), 0, (const struct sockaddr *) &server_addr, server_addr_size) == -1 ) {
+      perror("Sending message to server");
       fprintf(stderr, "%d\n", errno);
       fprintf(stderr, "%x\n", server_addr.sin_addr.s_addr);
       exit(1);
     }
 
-    printf("message sent: %s", buf);
-  }
+    if( getsockname(sock, (struct sockaddr *) &client_addr, &client_addr_size) == -1 ) {
+      perror("getting name of socket\n");
+      exit(1);
+    }
+
+#ifdef DEBUG
+    chomp(buf);
+    printf("===> ");
+    DEBUG_NTOH(client_addr.sin_addr.s_addr, client_addr.sin_port,buf,"from host");    
+    printf("===> ");
+    DEBUG_NTOH(naddr, nport,buf,"to host");
+#endif
+
+    //fork a child process so that the user can continue with input
+    int pid;
+    if( (pid = fork()) == -1 ) {
+      perror("Forking child process");
+      exit(1);
+    } else if( pid == 0 ) { //child
+      bzero(buf, sizeof(buf));
+      if( recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *) &server_addr, &server_addr_size) == -1 ) {
+	perror("Receiving message");
+	exit(1);
+      }
+      
+#ifdef DEBUG
+      printf("<=== ");
+      DEBUG_NTOH(server_addr.sin_addr.s_addr, server_addr.sin_port, buf, "from host");
+      printf("<=== ");
+      DEBUG_NTOH(client_addr.sin_addr.s_addr, client_addr.sin_port, buf, "to host");
+#endif
+      exit(0);
+    } //end of forked child
+  } //end of loop
   
   close(sock);
 }
@@ -231,3 +305,8 @@ void tcp_client(const unsigned int addr, const unsigned short port, int fd) {
   printf("creating tcp client, dst %d.%d.%d.%d and dport %d\n", addr >> 24, (addr >> 16) & 255, (addr >> 8) & 255,addr & 255, port);
 }
 
+void chomp (char* s) {
+  int end = strlen(s) - 1;
+  if (end >= 0 && s[end] == '\n')
+    s[end] = '\0';
+}
