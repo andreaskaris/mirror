@@ -9,6 +9,7 @@
 #include <strings.h>
 #include <errno.h>
 #include <sys/select.h>
+#include <signal.h>
 
 #define DEBUG
 
@@ -220,6 +221,57 @@ void udp_server(const unsigned short port) {
  */
 void tcp_server(const unsigned short port) {
   printf("creating tcp server on port %d\n", port);
+
+  int sock; //original, listening socket
+  int acc_sock; //accepted socket
+  unsigned short nport = htons(port);
+  struct sockaddr_in server_address;
+  unsigned int server_address_l = sizeof(server_address);
+  struct sockaddr_in client_address;
+  unsigned int client_address_l = sizeof(client_address);
+
+  if( (sock = socket(AF_INET, SOCK_STREAM, 0) ) == -1) {
+    perror("Opening TCP socket");
+    exit(1);
+  }
+
+  server_address.sin_family = AF_INET;
+  server_address.sin_port = nport;
+  server_address.sin_addr.s_addr = INADDR_ANY;
+  if( bind(sock, (const struct sockaddr *) &server_address, server_address_l) == -1 ) {
+    perror("Binding socket");
+    exit(1);
+  }
+
+  if( listen(sock, 5) == -1 ) {
+    perror("Listening on socket");
+    exit(1);
+  }
+
+  /********************/
+  /* loop until break */
+  /********************/
+  for(;;) {
+    if( (acc_sock = accept(sock, (struct sockaddr *) &client_address, &client_address_l)) == -1 ) {
+      perror("Answering socket");
+      exit(1);
+    }
+
+#ifdef DEBUG
+    printf("Socket opened - client info: \n");
+    DEBUG_NTOH(client_address.sin_addr.s_addr, client_address.sin_port, "", "-");
+    printf("Socket opened - server info: \n ");
+    DEBUG_NTOH(server_address.sin_addr.s_addr, server_address.sin_port, "", "-");
+    printf("\n");
+#endif
+
+    close(acc_sock);
+  }
+  /*******************/
+  /* end of for loop */
+  /*******************/ 
+
+  close(sock);
 }
 
 /*
@@ -273,15 +325,26 @@ void udp_client(const unsigned int addr, const unsigned short port, int fd) {
     DEBUG_NTOH(naddr, nport,buf,"to host");
 #endif
 
-    //fork a child process so that the user can continue with input
+    /*****************************************************************/
+    /* fork a child process so that the user can continue with input */
+    /*****************************************************************/
     int pid;
+    signal(SIGCHLD, SIG_IGN); // ignore signals from children => avoid defunct processes
     if( (pid = fork()) == -1 ) {
       perror("Forking child process");
       exit(1);
     } else if( pid == 0 ) { //child
+      /****************************/
+      /* set timeout for recvfrom */
+      /****************************/
+      struct timeval tv;
+      tv.tv_sec = 5; //max 5 sec
+      tv.tv_usec = 0;
+      setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (char *) &tv, sizeof(struct timeval));
       bzero(buf, sizeof(buf));
+      //now, receive
       if( recvfrom(sock, buf, sizeof(buf), 0, (struct sockaddr *) &server_addr, &server_addr_size) == -1 ) {
-	perror("Receiving message");
+	perror("Receiving answer message");
 	exit(1);
       }
       
