@@ -230,6 +230,8 @@ void tcp_server(const unsigned short port) {
   struct sockaddr_in client_address;
   unsigned int client_address_l = sizeof(client_address);
 
+  char buf[BUF_LEN];
+
   if( (sock = socket(AF_INET, SOCK_STREAM, 0) ) == -1) {
     perror("Opening TCP socket");
     exit(1);
@@ -264,6 +266,15 @@ void tcp_server(const unsigned short port) {
     DEBUG_NTOH(server_address.sin_addr.s_addr, server_address.sin_port, "", "-");
     printf("\n");
 #endif
+
+    bzero(buf, BUF_LEN); // reset buffer to 0
+    if( read(sock, buf, BUF_LEN) == -1 ) {
+      perror("Reading from client");
+      exit(1);
+    }
+    chomp(buf);
+
+    printf("%s\n", buf);
 
     close(acc_sock);
   }
@@ -366,6 +377,51 @@ void udp_client(const unsigned int addr, const unsigned short port, int fd) {
  */
 void tcp_client(const unsigned int addr, const unsigned short port, int fd) {
   printf("creating tcp client, dst %d.%d.%d.%d and dport %d\n", addr >> 24, (addr >> 16) & 255, (addr >> 8) & 255,addr & 255, port);
+
+  unsigned int naddr = htonl(addr);
+  unsigned short nport = htons(port);
+
+  int sock;
+  struct sockaddr_in client_address;
+  int client_address_l = sizeof(client_address);
+  struct sockaddr_in server_address;
+  int server_address_l = sizeof(server_address);
+  server_address.sin_family = AF_INET;
+  server_address.sin_port = nport;
+  server_address.sin_addr.s_addr = naddr;
+  char buf[BUF_LEN];
+  int char_count;
+
+  if( (sock = socket(AF_INET, SOCK_STREAM,0)) == -1 ) {
+    perror("Creating TCP socket");
+    exit(1);
+  }
+
+  if( connect(sock, (const struct sockaddr *) &server_address, server_address_l) == -1 ) {
+    perror("Connection to server");
+    exit(1);
+  }
+  
+  //run until break
+  for(;;) {
+    bzero(buf, BUF_LEN);
+    if( (char_count = read(fd, buf, BUF_LEN)) == -1 ) {
+      perror("Reading from file descriptor into buffer");
+      exit(1);
+    }
+    chomp(buf);
+
+    if( send(sock, buf, char_count, 0) == -1 ) {
+      perror("Sending message to server");
+      exit(1);
+    }
+
+    printf("%s\n",buf);
+  }
+  
+  sleep(20);
+
+  close(sock);
 }
 
 void chomp (char* s) {
